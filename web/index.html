@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hacker Brain · Insights from HN comments</title>
+  <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/">hacker<span>brain</span><span class="brand-dot">●</span></a><div class="top-meta"><span class="status-dot"></span> COMMENT EXPLORER <span class="divider">/</span> <span id="window">72-HOUR SAMPLE</span></div></header>
+  <main>
+    <section class="intro"><div class="eyebrow">KNOWLEDGE BETWEEN THE HEADLINES</div><h1>The insights are<br> in the comments.</h1><p>Explore the ideas, techniques, and tradeoffs shared on Hacker News.<br class="desktop-break"> Go straight to the comments and conversations behind them.</p></section>
+    <section class="workspace" aria-label="Search Hacker News comments">
+      <form id="search-form">
+        <div class="mode-row"><div class="mode-tabs" role="group" aria-label="Search mode"><button type="button" data-mode-choice="experiences" aria-pressed="false">Insights</button><button type="button" data-mode-choice="semantic" aria-pressed="false">Meaning</button><button type="button" data-mode-choice="keyword" aria-pressed="false">Keywords</button></div><label class="sr-only" for="mode">Search mode</label><select id="mode" hidden><option value="experiences">Insights</option><option value="semantic">Meaning</option><option value="keyword">Keywords</option></select><span>Original voices. Full context.</span></div>
+        <label class="sr-only" for="query">Search comments</label><div class="search-row"><span class="search-icon" aria-hidden="true">⌕</span><input id="query" name="q" placeholder="Ask about an idea, a tool, or a problem…" autocomplete="off" maxlength="500" aria-describedby="mode-hint"><button id="submit-search" class="primary" type="submit">Search <span aria-hidden="true">↗</span></button></div>
+        <p id="mode-hint" class="mode-hint">Find relevant comments, with firsthand experience ranked first.</p>
+        <div class="suggestions"><span>EXPLORE</span><button type="button" data-query="How are people using local models in their daily workflows?" data-mode="experiences">Local model workflows</button><button type="button" data-query="How do people back up and restore their self-hosted services?" data-mode="semantic">Backup &amp; restore</button><button type="button" data-query="What problems have people run into using SQLite in production?" data-mode="semantic">SQLite tradeoffs</button><button type="button" data-query="Ollama ESP32" data-mode="keyword">Ollama + ESP32</button></div>
+        <details id="filter-panel" class="filter-panel"><summary>Filters <span id="filter-count"></span></summary><div class="filters">
+          <fieldset><legend>What to include</legend><label><input id="experience" type="checkbox"> Firsthand wording only</label><small>Looks for language of personal experience.</small><label><input id="older" type="checkbox"> Include older comments</label><small>Search the older context collected with this sample.</small></fieldset>
+          <fieldset id="depth-label"><legend>Search breadth</legend><label for="depth" class="sr-only">Search breadth</label><select id="depth"><option value="fast">Quick · 48 candidates</option><option value="deep">Broader · 160, slower</option></select><small>Broader search checks more comments and takes longer.</small></fieldset>
+          <fieldset id="match-label" hidden><legend>Word matching</legend><label for="match" class="sr-only">Word matching</label><select id="match"><option value="all">All words</option><option value="any">Any word</option></select><small>Use quotation marks to search for a phrase.</small></fieldset>
+          <div class="filter-actions"><button id="reset-filters" type="button" class="text-button">Reset</button><button id="apply-filters" type="button" class="small-button">Apply filters</button></div>
+        </div></details>
+      </form>
+      <details class="data-details"><summary><span id="stats">Loading sample…</span><span class="about-link">About this data</span></summary><div class="details-body"><p>This is a fixed sample, with older parent comments added for context. The collection dates appear above. It does not cover all of Hacker News or update live.</p><p id="context-stats"></p><p>Comments are individual accounts, not verified answers. AI labels can be wrong; read the original conversation.</p><p id="privacy-note">Search provider information is loading.</p></div></details>
+      <h2 id="result-title" class="sr-only">Where do you want to dig in?</h2>
+      <div class="results-heading"><span id="result-count" role="status" aria-live="polite"></span><label class="sort-label">Sort <select id="sort"><option value="relevance">Most relevant</option><option value="recent">Newest</option></select></label><details class="search-details"><summary>Search details</summary><p id="search-details">Search results link directly to the original comments. AI labels describe contributions, not their accuracy.</p></details></div>
+      <p class="search-note" id="search-note"></p><div id="search-progress" class="search-progress" hidden aria-hidden="true"></div>
+      <div id="rank-ready" class="rank-ready" hidden><span>Ranked results are ready. Your place is saved until you switch.</span><button id="show-ranked" class="small-button" type="button">Show ranked results</button></div>
+      <div id="error" role="alert" hidden></div><div id="results"></div>
+      <nav class="pagination" aria-label="Search pages"><button id="previous" type="button" disabled>← Previous</button><span id="page-label"></span><button id="next" type="button" disabled>Next →</button></nav>
+    </section>
+    <footer><span>Follow the insight back to the source.</span><span id="coverage">A 72-hour sample, with older conversation context.</span></footer>
+  </main>
+  <dialog id="context-dialog" aria-label="Conversation context"><div class="dialog-bar"><span>CONVERSATION CONTEXT</span><button id="close-context" aria-label="Close context">✕</button></div><div id="context-content"></div></dialog>
+</body>
+</html>
