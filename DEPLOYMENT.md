@@ -1,6 +1,6 @@
 # Private homelab deployment
 
-This deployment runs independently of a workstation: a Linux systemd service serves the app, a dedicated rootless Docker container runs embeddings, and Agent Vault brokers Decisions requests on the same server. Tailscale Serve provides the private upstream; the existing Luna Edge proxy serves the custom domain. There is no public listener, application login, automatic collection, or workstation SSH dependency.
+This deployment runs independently of a workstation: a Linux systemd service serves the app, a dedicated rootless Docker container runs embeddings, and Agent Vault brokers Decisions requests on the same server. Tailscale Serve provides the private upstream; the existing Luna Edge proxy serves the custom domain. There is no public listener, application login, or workstation SSH dependency. A systemd timer requests an automatic refresh every hour.
 
 ## Layout
 
@@ -49,7 +49,7 @@ Commit and push the desired source first. Then:
 HACKER_BRAIN_HOST=your-ssh-alias ./scripts/deploy.sh
 ```
 
-The script refuses a dirty remote checkout, pulls `main` with a fast-forward merge, runs offline tests, backs up the installed unit, and restarts only Hacker Brain. It checks the local stats endpoint before reporting success. It does not overwrite the sample or pull a new model image. Deployment configuration/model changes need a separate reviewed Compose update.
+The script refuses a dirty remote checkout, pulls `main` with a fast-forward merge, runs offline tests, backs up the installed unit, and restarts only Hacker Brain. It installs and enables the hourly refresh timer, preserving backups of existing units. It checks the local stats endpoint before reporting success. It does not overwrite the sample or pull a new model image. Deployment configuration/model changes need a separate reviewed Compose update.
 
 The bind-mounted `deploy/compose.yml` is a template; keep the actual Compose configuration, pinned image digest, and model path on the host. Back up the deployed Compose file before replacing it.
 
@@ -75,9 +75,9 @@ For data recovery, back up original exports plus SQLite indexes/cache while the 
 
 To remove only the private route, use `tailscale serve --https=8443 off`; do not reset unrelated Serve services. Stop the app and its dedicated model Compose project if rolling back the entire deployment. Retain data and encrypted credentials until a human explicitly chooses to remove them.
 
-## Manual data refresh
+## Automatic and manual data refresh
 
-Use **Refresh HN** in the app. The request returns immediately; the server fetches in the background and the page shows progress. There is no timer or scheduled collection. Refresh does not call OpenAI: it uses the public HN API and the existing local Nomic model.
+Use **Refresh HN** in the app. The request returns immediately; the server fetches in the background and the page shows progress. The homelab timer runs at the start of every hour. The manual button remains available. An active job is reused rather than starting an overlapping refresh. Refresh does not call OpenAI: it uses the public HN API and the existing local Nomic model.
 
 The configured data directory remains the collection root. Its original exports and indexes stay intact. `current.json` points to the latest completed generation under `.refresh/versions/`; the server resolves that pointer on startup and for every search. A generation contains source exports, parent context, keyword and semantic indexes, and `refresh-state.json` with the last committed HN ID and pending unavailable IDs. `rerank.sqlite3` stays at the root and is shared through symlinks.
 
@@ -85,6 +85,19 @@ One job is allowed at a time. Work under `.refresh/work/` and its chunk checksum
 
 New IDs through the captured HN maximum are fetched, along with the previous 200 IDs and any pending null/timestamp-less IDs. Missing ancestors are fetched recursively. The original start date is preserved. HN does not offer historical revisions: this does not synchronize every older edit/deletion or every sibling of an older conversation. Unavailable items may remain pending. Exact unchanged embedding inputs reuse vectors; modified comments, changed titles, and changed parent context are embedded again. The installed model must still match the original index.
 
-Generations are retained for recovery; no automatic deletion is performed. Allow storage for a complete new generation on each refresh (initial dataset roughly 250–350 MB per generation, increasing with collection size). A refresh refuses to start with less than 1 GiB free or three times the current SQLite footprint. Watch available disk space; archive old generations only after checking that they are neither active nor the base of a staged refresh. Back up the entire root including `current.json`, the selected generation, and the shared cache. Restoring only the original root indexes would restore the original sample.
+Production sets `HACKER_BRAIN_RETAIN_GENERATIONS=2`: after a successful publication it retains the current and previous generated snapshots and removes older managed snapshots. The original seed directory and shared cache are always kept. A staged base is also protected. This bounds duplicate snapshot storage; the cumulative collection itself still grows. Standalone local servers default to retaining all generations (`0`). Values below `2` other than `0` are invalid. Cleanup failure does not invalidate a published refresh and appears in the app status.
+
+Allow room for a full staged generation (initial dataset roughly 250–350 MB per generation, increasing with collection size). A refresh refuses to start with less than 1 GiB free or three times the current SQLite footprint. Back up the entire root including `current.json`, the selected generation, and the shared cache. Restoring only the original root indexes would restore the original sample.
 
 `GET /api/refresh-status` reports progress and collection time. `POST /api/refresh` requires an empty JSON object, `Content-Type: application/json`, and `X-Hacker-Brain-Refresh: 1`; cross-origin browser submissions are rejected. Set `HACKER_BRAIN_PUBLIC_ORIGIN` to the exact canonical HTTPS origin when the private reverse proxy rewrites Host (as Luna does). These checks prevent browser cross-site requests, not unauthorized tailnet access: keep the existing private ingress boundary.
+
+
+### Hourly scheduler
+
+`hacker-brain-refresh.timer` uses `OnCalendar=hourly` and `Persistent=true`. Missed timer runs during downtime produce one catch-up request when the timer is activated, not one for every missed hour. Its oneshot service calls the private loopback refresh endpoint; it needs no API key. It starts the app if needed. The collection and indexing continue in the app's resumable worker after the request completes. A successful oneshot means the request was accepted; check `/api/refresh-status` for actual completion. A failed/interrupted job resumes on the next hourly request or a manual click. A refresh taking longer than an hour is not duplicated.
+
+The app reports the configured cadence via `HACKER_BRAIN_REFRESH_SCHEDULE=hourly`; the page checks for background progress every 30 seconds when idle and every 2 seconds while running. Search results already being read stay in place.
+
+Verify with `systemctl list-timers hacker-brain-refresh.timer` and `systemctl status hacker-brain-refresh.service`. To run the same trigger immediately, use `systemctl start hacker-brain-refresh.service`. Disable scheduling with `systemctl disable --now hacker-brain-refresh.timer` and remove the schedule environment setting from the app unit so the UI returns to manual mode. The deployment script re-enables the checked-in hourly configuration on future deployments.
+
+Homepage lists **Hacker Brain** under **Productivity**, pointing to `https://hackerbrain.tarscase.com/` and using the app's h-and-orange-dot icon. Homepage configuration and its backups remain on the dashboard host, outside this public repository.

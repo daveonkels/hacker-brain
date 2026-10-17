@@ -17,6 +17,8 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 Environment=HACKER_BRAIN_OLLAMA_URL=http://127.0.0.1:11435
 Environment=HACKER_BRAIN_DECISIONS_TRANSPORT=proxy
+Environment=HACKER_BRAIN_REFRESH_SCHEDULE=hourly
+Environment=HACKER_BRAIN_RETAIN_GENERATIONS=2
 Environment=HACKER_BRAIN_PUBLIC_ORIGIN=https://hackerbrain.tarscase.com
 Environment=NO_PROXY=127.0.0.1,localhost,::1
 LoadCredentialEncrypted=agent-vault-token:/etc/credstore.encrypted/hacker-brain-agent-vault-token

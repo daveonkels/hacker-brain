@@ -154,6 +154,33 @@ class RefreshTests(unittest.TestCase):
         thread.join(2)
         self.assertFalse(thread.is_alive());self.assertEqual(refresh.active_folder(self.root).name,'verified')
 
+    def test_retention_keeps_current_previous_seed_and_unmanaged_files(self):
+        with patch.dict('os.environ',{'HACKER_BRAIN_RETAIN_GENERATIONS':'2'}):
+            self.manager.run();first=refresh.active_folder(self.root)
+            self.manager.run();second=refresh.active_folder(self.root)
+            versions=self.root/'.refresh/versions'
+            unmanaged=versions/'operator-backup';unmanaged.mkdir();(unmanaged/'keep.txt').write_text('keep')
+            self.manager.run();third=refresh.active_folder(self.root)
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists());self.assertTrue(third.exists())
+            self.assertTrue((self.root/'search.sqlite3').exists())
+            self.assertTrue((unmanaged/'keep.txt').exists())
+            with search.connect(third/'search.sqlite3') as db:
+                self.assertEqual(search.search_items(db,{'q':'SQLite'})['items'][0]['id'],302)
+
+    def test_cleanup_failure_does_not_undo_successful_refresh(self):
+        with patch.object(self.manager,'prune_generations',side_effect=OSError('permission denied')):
+            self.manager.run()
+        self.assertEqual(self.manager.status['state'],'complete')
+        self.assertIn('storage',self.manager.status['cleanup_warning'])
+        self.assertNotEqual(refresh.active_folder(self.root),self.root)
+
+    def test_schedule_status_is_explicit_and_manual_is_default(self):
+        with patch.dict('os.environ',{'HACKER_BRAIN_REFRESH_SCHEDULE':'manual'}):
+            self.assertEqual(self.manager.get_status()['schedule'],'manual')
+        with patch.dict('os.environ',{'HACKER_BRAIN_REFRESH_SCHEDULE':'hourly'}):
+            self.assertEqual(self.manager.get_status()['schedule'],'hourly')
+
     def test_http_refresh_guard_status_and_icon_routes(self):
         with patch.object(refresh.RefreshManager,'start',return_value=False) as start:
             server=search.ThreadingHTTPServer(('127.0.0.1',0),search.handler(self.root/'search.sqlite3'))

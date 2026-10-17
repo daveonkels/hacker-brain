@@ -1,0 +1,17 @@
+[Unit]
+Description=Request a Hacker Brain data refresh
+Requires=hacker-brain.service
+After=hacker-brain.service
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 30 --header "Content-Type: application/json" --header "X-Hacker-Brain-Refresh: 1" --data "{}" http://127.0.0.1:18766/api/refresh
+TimeoutStartSec=40
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=

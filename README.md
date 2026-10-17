@@ -33,7 +33,7 @@ Press **Refresh HN** below the search controls to pull new stories and comments 
 
 Refresh preserves the original start date and adds to the collection. It rechecks the latest 200 IDs and retries unavailable items, but does not synchronize every older edit or deletion. Unchanged passages reuse their embeddings. A failed or interrupted refresh leaves the previous search indexes live; **Retry refresh** resumes saved work. It requires the same local Nomic model used for the original index and incurs no OpenAI calls.
 
-The data directory must be writable and contain the original exports, `run.json`, collection reports, and both search indexes. Completed updates live in separate generations selected by `current.json`. Keep that directory intact; see [deployment and recovery](DEPLOYMENT.md#manual-data-refresh) for storage and backup details. No automatic refresh schedule is enabled.
+The data directory must be writable and contain the original exports, `run.json`, collection reports, and both search indexes. Completed updates live in separate generations selected by `current.json`. Keep that directory intact; see [deployment and recovery](DEPLOYMENT.md#automatic-and-manual-data-refresh) for storage and backup details. The homelab deployment refreshes automatically every hour; the button remains available for manual refreshes. Standalone local servers stay manual unless configured otherwise.
 
 ## Three ways to search
 

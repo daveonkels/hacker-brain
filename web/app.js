@@ -192,7 +192,7 @@ async function loadStats(){
     $('#context-stats').textContent=`${number(data.context.context_items)} older items were collected to connect parent conversations. Deleted and dead comments are hidden from search.`;
     $('#privacy-note').textContent=rerankerProvider==='decisions'?'Insights mode sends your question and candidate comments to OpenAI through Agent Vault. Meaning and Keywords search locally.':'All search modes run locally. Insights mode uses a local model to assess comments.';
     $('#window').textContent=windowLabel.toUpperCase();
-    $('#coverage').textContent=`Manually refreshed collection, with older conversation context.`;
+
   } catch(error){$('#stats').textContent='Collection information unavailable';}
 }
 
@@ -203,6 +203,9 @@ async function pollRefresh(){
   try {
     const status=await get('/api/refresh-status');
     const active=status.state==='running';
+    const hourly=status.schedule==='hourly';
+    $('#refresh-schedule').textContent=hourly?'Automatic updates every hour · Refresh manually anytime.':'Manual updates · Refresh whenever you need new data.';
+    $('#coverage').textContent=hourly?'Hourly updates, with older conversation context.':'Manually refreshed collection, with older conversation context.';
     button.disabled=active;
     button.textContent=active?'Refreshing…':['failed','interrupted'].includes(status.state)?'↻ Retry refresh':'↻ Refresh HN';
     $('#collected-through').textContent='Collected through '+new Date(status.through).toLocaleString();
@@ -212,8 +215,9 @@ async function pollRefresh(){
       message=`${number(status.new_items)} new items added. Run your search again to explore the update.`;
       if(lastRefreshCompletion!==status.completed_at){lastRefreshCompletion=status.completed_at;await loadStats();}
     }
+    if(status.cleanup_warning)message+=' '+status.cleanup_warning;
     $('#refresh-status').textContent=message;
-    if(active)refreshTimer=setTimeout(pollRefresh,2000);
+    if(active || hourly)refreshTimer=setTimeout(pollRefresh,active?2000:30000);
   } catch(error){
     button.disabled=false;
     $('#refresh-status').textContent='Could not check refresh progress. Reconnecting…';

@@ -1,4 +1,4 @@
-"""Manual, resumable HN refresh with atomic search-index generations."""
+"""Scheduled or manual, resumable HN refresh with atomic search-index generations."""
 import collections
 import concurrent.futures
 import contextlib
@@ -6,6 +6,8 @@ import datetime
 import fcntl
 import gzip
 import json
+import os
+import re
 from pathlib import Path
 import shutil
 import sqlite3
@@ -49,7 +51,7 @@ def summary(folder, items, baseline, plan, pending):
         'storage_bytes':{'compact_jsonl':len(raw),'gzip_jsonl':(folder/'items.ndjson.gz').stat().st_size},
         'refresh':{'through_id':plan['max_id'],'fetched_at':hn.utc(plan['end']),
                    'pending_ids':pending,'new_items':len(set(items)-set(plan['original_ids']))},
-        'notes':['Cumulative collection; new HN IDs plus the most recent 200 IDs are fetched on manual refresh.',
+        'notes':['Cumulative collection; new HN IDs plus the most recent 200 IDs are fetched on refresh.',
                  'Older edits and deletions outside that overlap are not exhaustively synchronized.',
                  'Null or timestamp-less IDs are retained for retry. HN is not an atomic historical snapshot.']}
 
@@ -82,6 +84,7 @@ class RefreshManager:
             value=dict(self.status)
         folder=active_folder(self.root)
         state=json.loads((folder/'refresh-state.json').read_text()) if (folder/'refresh-state.json').exists() else {}
+        value['schedule']='hourly' if os.environ.get('HACKER_BRAIN_REFRESH_SCHEDULE')=='hourly' else 'manual'
         value['through']=state.get('fetched_at') or json.loads((folder/'summary.json').read_text())['window']['end_exclusive']
         return value
 
@@ -110,7 +113,7 @@ class RefreshManager:
                 lock.close()
                 return False
             try:
-                self.report(state='running',phase='starting',message='Checking for new HN items…',done=0,total=0,error=None)
+                self.report(state='running',phase='starting',message='Checking for new HN items…',done=0,total=0,error=None,cleanup_warning=None)
             except Exception:
                 lock.close()
                 raise
@@ -143,6 +146,36 @@ class RefreshManager:
                 self.publishing=False
                 self.condition.notify_all()
         return destination
+
+    def prune_generations(self, current, previous):
+        """Bound generated snapshot storage; never remove the seed or active/base pair."""
+        retain=int(os.environ.get('HACKER_BRAIN_RETAIN_GENERATIONS','0'))
+        if retain==0:
+            return
+        if retain<2:
+            raise ValueError('Retention must keep at least two generations')
+        versions=self.state_dir/'versions'
+        managed=[]
+        for folder in versions.iterdir():
+            if folder.is_symlink() or not folder.is_dir() or not re.fullmatch(r'[0-9a-f]{32}',folder.name):
+                continue
+            if not (folder/'prepared.json').is_file() or not (folder/'plan.json').is_file():
+                continue
+            plan=json.loads((folder/'plan.json').read_text())
+            if plan.get('id')==folder.name:
+                managed.append(folder)
+        keep={current.resolve(),previous.resolve(),active_folder(self.root)}
+        # Keep any staged base as well, including if called independently for maintenance.
+        staged=self.state_dir/'work'/'plan.json'
+        if staged.exists():
+            keep.add(Path(json.loads(staged.read_text())['base']).resolve())
+        for folder in sorted(managed,key=lambda p:p.stat().st_mtime,reverse=True):
+            if len(keep.intersection(managed))>=retain:
+                break
+            keep.add(folder)
+        for folder in managed:
+            if folder not in keep:
+                shutil.rmtree(folder)
 
     def run(self):
         import search
@@ -221,6 +254,7 @@ class RefreshManager:
             self.report(phase='indexing',message='Reusing unchanged semantic passages…')
             semantic.seed_unchanged(base,stage)
             hn.save_json(stage/'prepared.json',{'ready':True})
+            del items, older, new  # Release source dictionaries before background embedding.
         self.report(phase='embedding',message='Indexing new and changed comments…',done=0,total=0)
         semantic.build(stage,batch_size=16,progress=lambda done,total:self.report(done=done,total=total))
         for name in ('search.sqlite3','semantic.sqlite3'):
@@ -237,3 +271,8 @@ class RefreshManager:
         result=json.loads((destination/'summary.json').read_text())['refresh']
         self.report(state='complete',phase='complete',message='Refresh complete. New data is ready to search.',
                     new_items=result['new_items'],completed_at=hn.utc(time.time()),done=0,total=0)
+        try:
+            self.prune_generations(destination,base)
+        except (OSError,ValueError,KeyError):
+            # Publication already succeeded; cleanup cannot turn it into a failed refresh.
+            self.report(cleanup_warning='Older index snapshots could not be removed; check available storage.')

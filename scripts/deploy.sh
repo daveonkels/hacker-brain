@@ -14,10 +14,17 @@ stamp=$(date -u +%Y%m%dT%H%M%SZ)
 sudo install -d -m 700 /var/backups/hacker-brain
 sudo cp /etc/systemd/system/hacker-brain.service "/var/backups/hacker-brain/service.$stamp"
 sudo install -m 644 deploy/hacker-brain.service /etc/systemd/system/hacker-brain.service
+for unit in hacker-brain-refresh.service hacker-brain-refresh.timer; do
+  if sudo test -f "/etc/systemd/system/$unit"; then
+    sudo cp "/etc/systemd/system/$unit" "/var/backups/hacker-brain/$unit.$stamp"
+  fi
+  sudo install -m 644 "deploy/$unit" "/etc/systemd/system/$unit"
+done
 sudo systemctl daemon-reload
 sudo systemctl restart hacker-brain
 for attempt in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:18766/api/stats >/dev/null; then
+    sudo systemctl enable --now hacker-brain-refresh.timer
     printf 'Deployed %s (previous %s)\n' "$(git rev-parse HEAD)" "$old_revision"
     exit 0
   fi
