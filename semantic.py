@@ -109,21 +109,7 @@ def diversify(ranked, limit=100):
     return chosen
 
 
-def build(folder, batch_size=64):
-    source = folder / 'search.sqlite3'
-    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    config = {'version': VERSION, 'model': MODEL, 'digest': model_digest(), 'source_sha256': source_hash}
-    index = sqlite3.connect(folder / 'semantic.sqlite3')
-    index.executescript('''CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT);
-      CREATE TABLE IF NOT EXISTS vectors(item_id INTEGER, part INTEGER, start INTEGER, end INTEGER,
-        embedding BLOB NOT NULL, PRIMARY KEY(item_id,part));''')
-    previous = index.execute("SELECT value FROM meta WHERE key='config'").fetchone()
-    if previous and json.loads(previous[0]) != config:
-        raise SemanticUnavailable('Semantic index belongs to a different corpus/model. Use a new sample directory or explicitly rebuild its semantic index.')
-    index.execute("INSERT OR IGNORE INTO meta VALUES('config',?)", (json.dumps(config),))
-    index.execute("INSERT OR REPLACE INTO meta VALUES('complete','false')")
-    index.commit()
-    complete_parts = set(index.execute('SELECT item_id,part FROM vectors'))
+def document_tasks(source):
     with contextlib.closing(sqlite3.connect(source)) as db:
         db.row_factory = sqlite3.Row
         rows = db.execute("SELECT i.*, p.body AS parent_body FROM items i LEFT JOIN items p ON i.parent=p.id WHERE i.type='comment' AND i.body!='' AND i.dead=0 AND i.deleted=0 ORDER BY i.id").fetchall()
@@ -136,36 +122,88 @@ def build(folder, batch_size=64):
                 document += 'Parent context: ' + row['parent_body'][:320] + '\n'
             document += 'Comment: ' + text
             tasks.append((row['id'], part, start, end, document))
-    pending = [task for task in tasks if (task[0], task[1]) not in complete_parts]
-    started = time.monotonic()
-    print(json.dumps({'event':'start', 'comments':len(rows), 'passages':len(tasks), 'pending':len(pending)}), flush=True)
-    for offset in range(0, len(pending), batch_size):
-        batch = pending[offset:offset+batch_size]
-        vectors = embed([task[4] for task in batch], 'search_document: ')
-        dimensions = len(vectors[0])
-        if any(len(v) != dimensions for v in vectors):
-            raise SemanticUnavailable('Inconsistent embedding dimensions.')
-        index.executemany('INSERT OR REPLACE INTO vectors VALUES(?,?,?,?,?)',
-            [(*task[:4], vector.tobytes()) for task, vector in zip(batch, vectors)])
+    return tasks, len(rows)
+
+
+def seed_unchanged(base, folder):
+    """Copy only vectors whose exact model input and model identity still match."""
+    with contextlib.closing(sqlite3.connect(base/'semantic.sqlite3')) as old:
+        meta = dict(old.execute('SELECT key,value FROM meta'))
+    config = json.loads(meta['config'])
+    if meta.get('complete') != 'true' or config != {
+        'version': VERSION, 'model': MODEL, 'digest': model_digest(),
+        'source_sha256': hashlib.sha256((base/'search.sqlite3').read_bytes()).hexdigest()
+    }:
+        raise SemanticUnavailable('The existing semantic index must match the collection and installed model.')
+    old_tasks = {t[:2]:t[2:] for t in document_tasks(base/'search.sqlite3')[0]}
+    keep = [t[:2] for t in document_tasks(folder/'search.sqlite3')[0] if old_tasks.get(t[:2]) == t[2:]]
+    config['source_sha256'] = hashlib.sha256((folder/'search.sqlite3').read_bytes()).hexdigest()
+    # An interrupted seed is safe to recreate; prepared.json is written afterward.
+    (folder/'semantic.sqlite3').unlink(missing_ok=True)
+    with contextlib.closing(sqlite3.connect(folder/'semantic.sqlite3')) as db:
+        db.executescript("""CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT);
+          CREATE TABLE vectors(item_id INTEGER, part INTEGER, start INTEGER, end INTEGER,
+            embedding BLOB NOT NULL, PRIMARY KEY(item_id,part));
+          CREATE TEMP TABLE keep(item_id INTEGER, part INTEGER, PRIMARY KEY(item_id,part));""")
+        db.executemany('INSERT INTO keep VALUES(?,?)', keep)
+        db.execute('ATTACH DATABASE ? AS previous', (str(base/'semantic.sqlite3'),))
+        db.execute('INSERT INTO vectors SELECT v.* FROM previous.vectors v JOIN keep k USING(item_id,part)')
+        db.execute("INSERT INTO meta VALUES('config',?)", (json.dumps(config),))
+        db.execute("INSERT INTO meta VALUES('complete','false')")
+        db.commit()
+    return len(keep)
+
+
+def build(folder, batch_size=64, progress=None):
+    source = folder / 'search.sqlite3'
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    config = {'version': VERSION, 'model': MODEL, 'digest': model_digest(), 'source_sha256': source_hash}
+    index = sqlite3.connect(folder / 'semantic.sqlite3')
+    try:
+        index.executescript('''CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT);
+          CREATE TABLE IF NOT EXISTS vectors(item_id INTEGER, part INTEGER, start INTEGER, end INTEGER,
+            embedding BLOB NOT NULL, PRIMARY KEY(item_id,part));''')
+        previous = index.execute("SELECT value FROM meta WHERE key='config'").fetchone()
+        if previous and json.loads(previous[0]) != config:
+            raise SemanticUnavailable('Semantic index belongs to a different corpus/model. Use a new sample directory or explicitly rebuild its semantic index.')
+        index.execute("INSERT OR IGNORE INTO meta VALUES('config',?)", (json.dumps(config),))
+        index.execute("INSERT OR REPLACE INTO meta VALUES('complete','false')")
         index.commit()
-        done = min(offset+len(batch), len(pending))
-        if offset == 0 or done % (batch_size*10) == 0 or done == len(pending):
-            print(json.dumps({'event':'progress','done':len(complete_parts)+done,'total':len(tasks),
-                              'seconds':round(time.monotonic()-started,1)}), flush=True)
-    count = index.execute('SELECT count(*) FROM vectors').fetchone()[0]
-    if count != len(tasks):
-        raise SemanticUnavailable('Index coverage mismatch.')
-    if model_digest() != config['digest']:
-        raise SemanticUnavailable('The local model changed during indexing; index remains incomplete.')
-    blob = index.execute('SELECT embedding FROM vectors LIMIT 1').fetchone()
-    stats = {'comments':len(rows),'passages':count,'dimensions':len(blob[0])//4 if blob else 0,
-             'model':MODEL,'seconds_this_run':round(time.monotonic()-started,1)}
-    index.execute("INSERT OR REPLACE INTO meta VALUES('stats',?)", (json.dumps(stats),))
-    index.execute("INSERT OR REPLACE INTO meta VALUES('complete','true')")
-    index.commit()
-    index.close()
-    print(json.dumps({'event':'complete',**stats}), flush=True)
-    return stats
+        complete_parts = set(index.execute('SELECT item_id,part FROM vectors'))
+        tasks, comment_count = document_tasks(source)
+        pending = [task for task in tasks if (task[0], task[1]) not in complete_parts]
+        started = time.monotonic()
+        print(json.dumps({'event':'start', 'comments':comment_count, 'passages':len(tasks), 'pending':len(pending)}), flush=True)
+        if progress: progress(0, len(pending))
+        for offset in range(0, len(pending), batch_size):
+            batch = pending[offset:offset+batch_size]
+            vectors = embed([task[4] for task in batch], 'search_document: ')
+            dimensions = len(vectors[0])
+            if any(len(v) != dimensions for v in vectors):
+                raise SemanticUnavailable('Inconsistent embedding dimensions.')
+            index.executemany('INSERT OR REPLACE INTO vectors VALUES(?,?,?,?,?)',
+                [(*task[:4], vector.tobytes()) for task, vector in zip(batch, vectors)])
+            index.commit()
+            done = min(offset+len(batch), len(pending))
+            if progress: progress(done, len(pending))
+            if offset == 0 or done % (batch_size*10) == 0 or done == len(pending):
+                print(json.dumps({'event':'progress','done':len(complete_parts)+done,'total':len(tasks),
+                                  'seconds':round(time.monotonic()-started,1)}), flush=True)
+        count = index.execute('SELECT count(*) FROM vectors').fetchone()[0]
+        if count != len(tasks):
+            raise SemanticUnavailable('Index coverage mismatch.')
+        if model_digest() != config['digest']:
+            raise SemanticUnavailable('The local model changed during indexing; index remains incomplete.')
+        blob = index.execute('SELECT embedding FROM vectors LIMIT 1').fetchone()
+        stats = {'comments':comment_count,'passages':count,'dimensions':len(blob[0])//4 if blob else 0,
+                 'model':MODEL,'seconds_this_run':round(time.monotonic()-started,1)}
+        index.execute("INSERT OR REPLACE INTO meta VALUES('stats',?)", (json.dumps(stats),))
+        index.execute("INSERT OR REPLACE INTO meta VALUES('complete','true')")
+        index.commit()
+        print(json.dumps({'event':'complete',**stats}), flush=True)
+        return stats
+    finally:
+        index.close()
 
 
 class Matrix:

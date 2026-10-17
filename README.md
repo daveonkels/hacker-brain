@@ -10,7 +10,7 @@
 
 Explore the ideas, techniques, and tradeoffs shared in Hacker News comments. Ask a question, find relevant experiences, and follow each insight back to the original conversation.
 
-Hacker Brain collects a bounded sample of HN, restores older parent context, and makes the comments searchable by keywords, meaning, or AI-ranked firsthand experience. Results keep the author's words, attribution, and original comment links.
+Hacker Brain starts with a bounded sample of HN and can extend it on demand, restores older parent context, and makes the comments searchable by keywords, meaning, or AI-ranked firsthand experience. Results keep the author's words, attribution, and original comment links.
 
 ![Hacker Brain home screen with search modes and example questions](docs/images/home.png)
 
@@ -26,6 +26,14 @@ Each result opens the full comment and its collected conversation context: the o
 ![Ranked comments showing source excerpts, contribution labels, and links to Hacker News](docs/images/results.png)
 
 *Screenshots show the October 13–16, 2026 development sample with the optional Decisions provider. The collected dataset is not bundled.*
+
+## Refresh the collection
+
+Press **Refresh HN** below the search controls to pull new stories and comments since the last successful fetch. Progress shows collection, parent context, and semantic indexing; you can keep searching while it runs. Once complete, run your search again to include the new material.
+
+Refresh preserves the original start date and adds to the collection. It rechecks the latest 200 IDs and retries unavailable items, but does not synchronize every older edit or deletion. Unchanged passages reuse their embeddings. A failed or interrupted refresh leaves the previous search indexes live; **Retry refresh** resumes saved work. It requires the same local Nomic model used for the original index and incurs no OpenAI calls.
+
+The data directory must be writable and contain the original exports, `run.json`, collection reports, and both search indexes. Completed updates live in separate generations selected by `current.json`. Keep that directory intact; see [deployment and recovery](DEPLOYMENT.md#manual-data-refresh) for storage and backup details. No automatic refresh schedule is enabled.
 
 ## Three ways to search
 

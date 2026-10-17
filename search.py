@@ -6,6 +6,7 @@ import datetime
 from html.parser import HTMLParser
 import json
 import pathlib
+import os
 import re
 import sqlite3
 import threading
@@ -207,24 +208,65 @@ def conversation(db, item_id):
     return {'item': item, 'ancestors': list(reversed(ancestors)),
             'replies': [serialize(r) for r in replies], 'followups': followups,
             'unresolved_parent': parent if parent and parent not in seen else None,
-            'scope': 'Collected replies from the 72-hour sample plus older ancestors; not the entire historical thread.'}
+            'scope': 'Collected replies from the collection window plus older ancestors; not the entire historical thread.'}
 
 
 def handler(db_path, reranker='local'):
     semantic_engine = None
     engine_lock = threading.Lock()
 
+    from refresh import RefreshManager
+    def invalidate():
+        nonlocal semantic_engine
+        with engine_lock:
+            semantic_engine = None
+    refresh = RefreshManager(db_path.parent, on_publish=invalidate)
+
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            if urlparse(self.path).path != '/api/refresh':
+                self.send_error(404)
+                return
+            origin = self.headers.get('Origin')
+            if (self.headers.get('X-Hacker-Brain-Refresh') != '1'
+                or self.headers.get('Content-Type') != 'application/json'
+                or self.headers.get('Sec-Fetch-Site') == 'cross-site'
+                or (origin and urlparse(origin).netloc != self.headers.get('Host')
+                    and origin != os.environ.get('HACKER_BRAIN_PUBLIC_ORIGIN'))):
+                self.send_error(403, 'Same-origin refresh required')
+                return
+            try:
+                size = int(self.headers.get('Content-Length','0'))
+                if size < 0 or size > 1024 or json.loads(self.rfile.read(size)) != {}:
+                    raise ValueError('Invalid body')
+                refresh.start()
+                self.respond(json.dumps(refresh.get_status()).encode(), 'application/json', 202)
+            except (ValueError, OSError):
+                self.send_error(400, 'Unable to start refresh')
+
+        def respond(self, payload, content_type, status=200):
+            self.send_response(status)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+            self.end_headers()
+            self.wfile.write(payload)
+
         def do_GET(self):
             nonlocal semantic_engine
             parsed = urlparse(self.path)
             try:
+                if parsed.path == '/api/refresh-status':
+                    self.respond(json.dumps(refresh.get_status()).encode(), 'application/json')
+                    return
                 if parsed.path.startswith('/api/'):
-                    with contextlib.closing(connect(db_path)) as db:
+                    with refresh.read() as folder, contextlib.closing(connect(folder/'search.sqlite3')) as db:
                         params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
                         if parsed.path == '/api/stats':
                             result = json.loads(db.execute("SELECT value FROM metadata WHERE key='stats'").fetchone()[0])
-                            result['index_bytes'] = db_path.stat().st_size
+                            result['index_bytes'] = (folder/'search.sqlite3').stat().st_size
                             result['reranker'] = reranker
                         elif parsed.path == '/api/rerank-status':
                             from rerank import status
@@ -233,7 +275,7 @@ def handler(db_path, reranker='local'):
                             if params.get('mode') in ('semantic','experiences') and params.get('q','').strip():
                                 with engine_lock:
                                     if semantic_engine is None:
-                                        semantic_engine = Engine(db_path.parent, reranker=reranker)
+                                        semantic_engine = Engine(folder, reranker=reranker)
                                 result = semantic_engine.search(db,params)
                             else:
                                 result = search_items(db, params)
@@ -251,20 +293,19 @@ def handler(db_path, reranker='local'):
                 else:
                     assets = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'),
                               '/style.css': ('style.css', 'text/css')}
+                    icon = parsed.path.removeprefix('/icons/') if parsed.path.startswith('/icons/') else ''
+                    icon_types = {'.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon', '.webmanifest':'application/manifest+json'}
+                    if icon and '/' not in icon and pathlib.Path(icon).suffix in icon_types and (ROOT/'web'/'icons'/icon).is_file():
+                        assets[parsed.path] = ('icons/'+icon, icon_types[pathlib.Path(icon).suffix])
+                    if parsed.path == '/favicon.ico':
+                        assets[parsed.path] = ('icons/favicon.ico', 'image/x-icon')
                     if parsed.path not in assets:
                         self.send_error(404)
                         return
                     name, content_type = assets[parsed.path]
                     payload = (ROOT / 'web' / name).read_bytes()
                     content_type += '; charset=utf-8'
-                self.send_response(200)
-                self.send_header('Content-Type', content_type)
-                self.send_header('Content-Length', str(len(payload)))
-                self.send_header('Cache-Control', 'no-store')
-                self.send_header('X-Content-Type-Options', 'nosniff')
-                self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-                self.end_headers()
-                self.wfile.write(payload)
+                self.respond(payload, content_type)
             except SemanticUnavailable as exc:
                 payload = json.dumps({'error':str(exc)}).encode()
                 self.send_response(503)

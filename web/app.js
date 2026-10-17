@@ -182,10 +182,7 @@ document.querySelectorAll('[data-query]').forEach(button=>button.addEventListene
 $('#previous').addEventListener('click',()=>{offset=Math.max(0,offset-20);search();$('#search-form').scrollIntoView({behavior:'smooth'});});
 $('#next').addEventListener('click',()=>{offset+=20;search();$('#search-form').scrollIntoView({behavior:'smooth'});});
 document.addEventListener('keydown',event=>{if(event.key==='/' && !$('#context-dialog').open && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.activeElement.isContentEditable){event.preventDefault();$('#query').focus();}});
-async function init(){
-  const p=new URLSearchParams(location.search);$('#query').value=p.get('q')||'';$('#experience').checked=p.get('experience')==='1';$('#older').checked=p.get('older')==='1';$('#match').value=p.get('match')==='any'?'any':'all';$('#sort').value=p.get('sort')==='recent'?'recent':'relevance';offset=Math.max(0,Number(p.get('offset'))||0);
-  $('#depth').value=p.get('depth')==='deep'?'deep':'fast';
-  $('#mode').value=['keyword','semantic','experiences'].includes(p.get('mode'))?p.get('mode'):'experiences';modeUI();
+async function loadStats(){
   try {
     const data=await get('/api/stats');rerankerProvider=data.reranker||'local';
     const sampleWindow=data.sample.window;
@@ -195,8 +192,49 @@ async function init(){
     $('#context-stats').textContent=`${number(data.context.context_items)} older items were collected to connect parent conversations. Deleted and dead comments are hidden from search.`;
     $('#privacy-note').textContent=rerankerProvider==='decisions'?'Insights mode sends your question and candidate comments to OpenAI through Agent Vault. Meaning and Keywords search locally.':'All search modes run locally. Insights mode uses a local model to assess comments.';
     $('#window').textContent=windowLabel.toUpperCase();
-    $('#coverage').textContent=`A ${sampleWindow.hours}-hour sample, with older conversation context.`;
-  } catch(error){$('#stats').textContent='Sample information unavailable';}
+    $('#coverage').textContent=`Manually refreshed collection, with older conversation context.`;
+  } catch(error){$('#stats').textContent='Collection information unavailable';}
+}
+
+let refreshTimer, lastRefreshCompletion;
+async function pollRefresh(){
+  clearTimeout(refreshTimer);
+  const button=$('#refresh-hn');
+  try {
+    const status=await get('/api/refresh-status');
+    const active=status.state==='running';
+    button.disabled=active;
+    button.textContent=active?'Refreshing…':['failed','interrupted'].includes(status.state)?'↻ Retry refresh':'↻ Refresh HN';
+    $('#collected-through').textContent='Collected through '+new Date(status.through).toLocaleString();
+    let message=status.state==='idle'?'Fetch new comments and stories when you need them.':status.message;
+    if(active && status.total)message+=` ${number(status.done)} / ${number(status.total)} ${status.phase==='embedding'?'passages':'items'}`;
+    if(status.state==='complete'){
+      message=`${number(status.new_items)} new items added. Run your search again to explore the update.`;
+      if(lastRefreshCompletion!==status.completed_at){lastRefreshCompletion=status.completed_at;await loadStats();}
+    }
+    $('#refresh-status').textContent=message;
+    if(active)refreshTimer=setTimeout(pollRefresh,2000);
+  } catch(error){
+    button.disabled=false;
+    $('#refresh-status').textContent='Could not check refresh progress. Reconnecting…';
+    refreshTimer=setTimeout(pollRefresh,5000);
+  }
+}
+$('#refresh-hn').addEventListener('click',async()=>{
+  $('#refresh-hn').disabled=true;
+  $('#refresh-status').textContent='Starting refresh…';
+  try {
+    const response=await fetch('/api/refresh',{method:'POST',headers:{'Content-Type':'application/json','X-Hacker-Brain-Refresh':'1'},body:'{}'});
+    if(!response.ok)throw new Error('Unable to start refresh. Try again.');
+    await pollRefresh();
+  } catch(error){$('#refresh-hn').disabled=false;$('#refresh-status').textContent=error.message;}
+});
+async function init(){
+  const p=new URLSearchParams(location.search);$('#query').value=p.get('q')||'';$('#experience').checked=p.get('experience')==='1';$('#older').checked=p.get('older')==='1';$('#match').value=p.get('match')==='any'?'any':'all';$('#sort').value=p.get('sort')==='recent'?'recent':'relevance';offset=Math.max(0,Number(p.get('offset'))||0);
+  $('#depth').value=p.get('depth')==='deep'?'deep':'fast';
+  $('#mode').value=['keyword','semantic','experiences'].includes(p.get('mode'))?p.get('mode'):'experiences';modeUI();
+  await loadStats();
+  pollRefresh();
   search();
 }
 init();

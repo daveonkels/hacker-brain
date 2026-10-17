@@ -3,6 +3,13 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Hacker Brain · Insights from HN comments</title>
+<link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/icons/site.webmanifest">
+<link rel="shortcut icon" href="/icons/favicon.ico">
+<meta name="theme-color" content="#f7f6f2">
   <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
 </head>
 <body>
@@ -16,13 +23,14 @@
         <p id="mode-hint" class="mode-hint">Find relevant comments, with firsthand experience ranked first.</p>
         <div class="suggestions"><span>EXPLORE</span><button type="button" data-query="How are people using local models in their daily workflows?" data-mode="experiences">Local model workflows</button><button type="button" data-query="How do people back up and restore their self-hosted services?" data-mode="semantic">Backup &amp; restore</button><button type="button" data-query="What problems have people run into using SQLite in production?" data-mode="semantic">SQLite tradeoffs</button><button type="button" data-query="Ollama ESP32" data-mode="keyword">Ollama + ESP32</button></div>
         <details id="filter-panel" class="filter-panel"><summary>Filters <span id="filter-count"></span></summary><div class="filters">
-          <fieldset><legend>What to include</legend><label><input id="experience" type="checkbox"> Firsthand wording only</label><small>Looks for language of personal experience.</small><label><input id="older" type="checkbox"> Include older comments</label><small>Search the older context collected with this sample.</small></fieldset>
+          <fieldset><legend>What to include</legend><label><input id="experience" type="checkbox"> Firsthand wording only</label><small>Looks for language of personal experience.</small><label><input id="older" type="checkbox"> Include older comments</label><small>Search the older context collected with this collection.</small></fieldset>
           <fieldset id="depth-label"><legend>Search breadth</legend><label for="depth" class="sr-only">Search breadth</label><select id="depth"><option value="fast">Quick · 48 candidates</option><option value="deep">Broader · 160, slower</option></select><small>Broader search checks more comments and takes longer.</small></fieldset>
           <fieldset id="match-label" hidden><legend>Word matching</legend><label for="match" class="sr-only">Word matching</label><select id="match"><option value="all">All words</option><option value="any">Any word</option></select><small>Use quotation marks to search for a phrase.</small></fieldset>
           <div class="filter-actions"><button id="reset-filters" type="button" class="text-button">Reset</button><button id="apply-filters" type="button" class="small-button">Apply filters</button></div>
         </div></details>
       </form>
-      <details class="data-details"><summary><span id="stats">Loading sample…</span><span class="about-link">About this data</span></summary><div class="details-body"><p>This is a fixed sample, with older parent comments added for context. The collection dates appear above. It does not cover all of Hacker News or update live.</p><p id="context-stats"></p><p>Comments are individual accounts, not verified answers. AI labels can be wrong; read the original conversation.</p><p id="privacy-note">Search provider information is loading.</p></div></details>
+      <details class="data-details"><summary><span id="stats">Loading collection…</span><span class="about-link">About this data</span></summary><div class="details-body"><p>This collection grows when you press Refresh HN. Each refresh fetches new items since the last successful collection and connects missing parent conversations. Recent items are rechecked; older edits and deletions may not be reflected.</p><p id="context-stats"></p><p>Comments are individual accounts, not verified answers. AI labels can be wrong; read the original conversation.</p><p id="privacy-note">Search provider information is loading.</p></div></details>
+      <div class="refresh-row"><div><span id="collected-through">Collection date is loading…</span><p id="refresh-status" role="status" aria-live="polite"></p></div><button id="refresh-hn" class="small-button" type="button" disabled>↻ Refresh HN</button></div>
       <h2 id="result-title" class="sr-only">Where do you want to dig in?</h2>
       <div class="results-heading"><span id="result-count" role="status" aria-live="polite"></span><label class="sort-label">Sort <select id="sort"><option value="relevance">Most relevant</option><option value="recent">Newest</option></select></label><details class="search-details"><summary>Search details</summary><p id="search-details">Search results link directly to the original comments. AI labels describe contributions, not their accuracy.</p></details></div>
       <p class="search-note" id="search-note"></p><div id="search-progress" class="search-progress" hidden aria-hidden="true"></div>
