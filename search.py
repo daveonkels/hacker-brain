@@ -276,7 +276,8 @@ def handler(db_path, reranker='local'):
                 self.send_error(400, 'Invalid search request')
 
         def log_message(self, fmt, *args):
-            print(fmt % args, flush=True)
+            # Query text can be private; persist only the route and status.
+            print('%s %s' % (urlparse(self.path).path, args[1] if len(args)>1 else ''), flush=True)
     return Handler
 
 

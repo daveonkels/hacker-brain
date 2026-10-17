@@ -1,0 +1,10 @@
+.git
+.env*
+data
+*.sqlite3*
+__pycache__
+*.pyc
+.agents
+.codex
+.aws
+docs/images

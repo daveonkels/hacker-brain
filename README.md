@@ -88,11 +88,15 @@ The faster development configuration uses OpenAI Decisions for comment classific
 python3 search.py --data data/hn-72h --serve --port 8765 --reranker decisions
 ```
 
-**This is currently a custom integration, not a turnkey API-key configuration.** It requires the author's Agent Vault wrapper and approved proxy configuration, neither of which is included. Without those, use Keywords, Meaning, or local Insights. Setting `OPENAI_API_KEY` alone does not enable this provider.
+**This is currently a custom integration, not a turnkey API-key configuration.** It requires approved Agent Vault configuration. Desktop mode uses the author's external wrapper; the included homelab service runs directly under the broker using `HACKER_BRAIN_DECISIONS_TRANSPORT=proxy`. Without those, use Keywords, Meaning, or local Insights. Setting `OPENAI_API_KEY` alone does not enable this provider.
 
 The adapter in [`decisions.py`](decisions.py) uses `gpt-6-luna` at `/v1/decisions`. It expects the runner at `~/.agents/skills/agent-vault-cli/scripts/luna_vault_run.py`, which executes a bounded batch through a credential-substituting proxy. The source contains a credential placeholder, not a key. A portable transport can implement the same request/response contract; the tests inject a fake transport for offline validation.
 
 This mode sends your question, candidate comments, discussion titles, and limited parent context to OpenAI and incurs API usage. Check service availability and current terms before adapting the transport. Keywords and Meaning remain local after collection.
+
+## Run it on a homelab
+
+For an always-on installation, see [DEPLOYMENT.md](DEPLOYMENT.md). The included Linux service runs the app under Agent Vault, with a separate embedding container and private Tailscale HTTPS. It preserves the current sample and caches without depending on a workstation.
 
 ## How it works
 

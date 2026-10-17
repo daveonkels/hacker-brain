@@ -8,6 +8,7 @@ import functools
 import hashlib
 import json
 import math
+import os
 import pathlib
 import re
 import sqlite3
@@ -17,7 +18,7 @@ import urllib.error
 import urllib.request
 
 MODEL = 'nomic-embed-text:latest'
-API = 'http://127.0.0.1:11434/api/'
+API = os.environ.get('HACKER_BRAIN_OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/') + '/api/'
 VERSION = 'nomic-comment-passages-v1'
 STOP_WORDS = set('a an the i we you they it this that these those how what which why when where who are is was were be been being do does did have has had can could should would will may might people someone anyone others using use used uses daily their your our my in on at of for to from with and or as by about into actually practical experiences experience examples example workflows workflow tell me'.split())
 
@@ -168,19 +169,25 @@ def build(folder, batch_size=64):
 
 
 class Matrix:
-    """Use macOS's existing Accelerate BLAS, with a portable Python fallback."""
+    """Use an existing system CBLAS library, with a portable Python fallback."""
     def __init__(self, values, rows, dimensions):
         self.values, self.rows, self.dimensions = values, rows, dimensions
         self.pointer = (ctypes.c_float * len(values)).from_buffer(values)
         self.gemv = None
-        path = ctypes.util.find_library('Accelerate')
-        if path:
-            self.library = ctypes.CDLL(path)
-            self.gemv = self.library.cblas_sgemv
+        for name in ('Accelerate', 'blas'):
+            path = ctypes.util.find_library(name)
+            if not path:
+                continue
+            try:
+                self.library = ctypes.CDLL(path)
+                self.gemv = self.library.cblas_sgemv
+            except (OSError, AttributeError):
+                continue
             float_ptr = ctypes.POINTER(ctypes.c_float)
             self.gemv.argtypes = [ctypes.c_int]*4 + [ctypes.c_float, float_ptr, ctypes.c_int,
                 float_ptr, ctypes.c_int, ctypes.c_float, float_ptr, ctypes.c_int]
             self.gemv.restype = None
+            break
 
     def dot(self, query):
         if len(query) != self.dimensions:

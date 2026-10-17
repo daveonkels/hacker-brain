@@ -1,0 +1,44 @@
+[Unit]
+Description=Hacker Brain private comment explorer
+After=network-online.target agent-vault.service
+Wants=network-online.target
+Requires=agent-vault.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=hacker-brain
+StateDirectory=hacker-brain
+StateDirectoryMode=0700
+WorkingDirectory=/opt/hacker-brain
+Environment=HOME=/var/lib/hacker-brain
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=HACKER_BRAIN_OLLAMA_URL=http://127.0.0.1:11435
+Environment=HACKER_BRAIN_DECISIONS_TRANSPORT=proxy
+Environment=NO_PROXY=127.0.0.1,localhost,::1
+LoadCredentialEncrypted=agent-vault-token:/etc/credstore.encrypted/hacker-brain-agent-vault-token
+ExecStart=/opt/hacker-brain/deploy/start-service.sh
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+MemoryMax=900M
+TasksMax=96
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -4,6 +4,7 @@ import zlib
 import concurrent.futures
 import json
 import math
+import os
 import re
 from pathlib import Path
 import subprocess
@@ -26,7 +27,7 @@ WAVE_SIZE = 680  # Maximum 340 candidates, two independent requests per comment.
 # argv; authentication stays within the approved proxy. Never echo HTTP errors.
 REMOTE = r'''
 import base64, concurrent.futures, json, subprocess, sys, time, threading, zlib
-requests = json.loads(zlib.decompress(base64.b64decode(sys.argv[1])))
+requests = json.loads(zlib.decompress(base64.b64decode(sys.argv[1] if len(sys.argv)>1 else sys.stdin.read())))
 stopped = threading.Event()
 def send(body):
     if stopped.is_set(): return {'error_status':0}
@@ -60,8 +61,24 @@ def vault_transport(requests):
         raise ValueError('Too many Decisions requests in one search')
     payload = base64.b64encode(zlib.compress(json.dumps(requests).encode())).decode()
     try:
-        result = subprocess.run([sys.executable, str(VAULT_RUNNER), '--',
-            'python3', '-c', REMOTE, payload], capture_output=True, text=True, timeout=220)
+        transport = os.environ.get('HACKER_BRAIN_DECISIONS_TRANSPORT', 'desktop')
+        if transport == 'proxy':
+            # This mode must be launched by `agent-vault vault run`. Never send
+            # the placeholder directly, or let NO_PROXY bypass the broker.
+            proxy = os.environ.get('HTTPS_PROXY')
+            if not proxy or not os.environ.get('AGENT_VAULT_TOKEN') or not os.environ.get('CURL_CA_BUNDLE'):
+                raise ValueError('Agent Vault proxy environment missing')
+            child_env = os.environ.copy()
+            child_env['https_proxy'] = proxy
+            child_env.pop('no_proxy', None)
+            child_env['NO_PROXY'] = 'localhost,127.0.0.1,::1'
+            result = subprocess.run([sys.executable, '-c', REMOTE], input=payload,
+                env=child_env, capture_output=True, text=True, timeout=220)
+        elif transport == 'desktop':
+            result = subprocess.run([sys.executable, str(VAULT_RUNNER), '--',
+                'python3', '-c', REMOTE, payload], capture_output=True, text=True, timeout=220)
+        else:
+            raise ValueError('Unknown Decisions transport')
         if result.returncode:
             raise ValueError('Vault transport unavailable')
         responses = json.loads(result.stdout)

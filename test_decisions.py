@@ -108,6 +108,30 @@ class DecisionsTests(unittest.TestCase):
             self.assertNotIn('sensitive',str(caught.exception))
             self.assertEqual(run.call_args.args[0][1],str(decisions.VAULT_RUNNER))
 
+    def test_proxy_transport_requires_broker_environment(self):
+        with patch.dict(decisions.os.environ, {'HACKER_BRAIN_DECISIONS_TRANSPORT':'proxy'}, clear=True), \
+             patch.object(decisions.subprocess, 'run') as run:
+            with self.assertRaises(SemanticUnavailable):
+                decisions.vault_transport([{'test':'public'}])
+            run.assert_not_called()
+
+    def test_proxy_transport_uses_stdin_and_prevents_proxy_bypass(self):
+        import base64, zlib
+        environment = {'HACKER_BRAIN_DECISIONS_TRANSPORT':'proxy',
+            'HTTPS_PROXY':'http://127.0.0.1:14322', 'AGENT_VAULT_TOKEN':'test-broker-token',
+            'CURL_CA_BUNDLE':'/test-ca.pem', 'NO_PROXY':'*', 'no_proxy':'api.openai.com'}
+        with patch.dict(decisions.os.environ, environment, clear=True), \
+             patch.object(decisions.subprocess, 'run', return_value=types.SimpleNamespace(
+                 returncode=0, stdout='[{"response":{}}]')) as run:
+            result=decisions.vault_transport([{'test':'public'}])
+            self.assertEqual(result,[{'response':{}}])
+            kwargs=run.call_args.kwargs
+            self.assertEqual(json.loads(zlib.decompress(base64.b64decode(kwargs['input']))),[{'test':'public'}])
+            self.assertNotIn('no_proxy',kwargs['env'])
+            self.assertNotIn('*',kwargs['env']['NO_PROXY'])
+            self.assertEqual(kwargs['env']['https_proxy'],environment['HTTPS_PROXY'])
+            self.assertNotIn('test-broker-token',' '.join(run.call_args.args[0]))
+
     def test_remote_worker_http_errors_and_fixed_destination(self):
         import base64, zlib
         class Executor:
