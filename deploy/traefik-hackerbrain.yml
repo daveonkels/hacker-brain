@@ -1,0 +1,19 @@
+# Private ingress through the existing Luna Edge file provider.
+# The upstream is Tailscale Serve; TLS verification stays enabled.
+http:
+  routers:
+    hacker-brain:
+      rule: Host(`hackerbrain.tarscase.com`)
+      entryPoints:
+        - websecure
+      tls: {}
+      middlewares:
+        - private-security@file
+        - compress@file
+      service: hacker-brain
+  services:
+    hacker-brain:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: https://luna.whale-crested.ts.net:8443

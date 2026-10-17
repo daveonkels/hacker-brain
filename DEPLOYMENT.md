@@ -1,6 +1,6 @@
 # Private homelab deployment
 
-This deployment runs independently of a workstation: a Linux systemd service serves the app, a dedicated rootless Docker container runs embeddings, and Agent Vault brokers Decisions requests on the same server. Tailscale Serve provides private HTTPS. There is no public listener, application login, automatic collection, or workstation SSH dependency.
+This deployment runs independently of a workstation: a Linux systemd service serves the app, a dedicated rootless Docker container runs embeddings, and Agent Vault brokers Decisions requests on the same server. Tailscale Serve provides the private upstream; the existing Luna Edge proxy serves the custom domain. There is no public listener, application login, automatic collection, or workstation SSH dependency.
 
 ## Layout
 
@@ -14,7 +14,8 @@ This deployment runs independently of a workstation: a Linux systemd service ser
 | App listener | `127.0.0.1:18766` |
 | Embedding listener | `127.0.0.1:11435` |
 | Rootless model Compose project | `hacker-brain-model`, using `deploy/compose.yml` |
-| Private URL | `https://<your-server-tailnet-name>:8443/` |
+| Private URL | `https://hackerbrain.tarscase.com/` (Tailscale required) |
+| Fallback URL | `https://luna.whale-crested.ts.net:8443/` |
 
 The service uses a dedicated dynamic Unix user, read-only system files, hidden home directories, no capabilities, memory limits, and an encrypted systemd credential. The upstream OpenAI key never enters the app or a container. The dedicated Agent Vault identity has instance role `no-access` and `default:proxy`; this broker role permits the default vault's approved services, while this app's transport is fixed to `/v1/decisions`. It is not an endpoint-specific identity. A separately provisioned vault can further isolate it.
 
@@ -31,6 +32,14 @@ The server needs Python with SQLite FTS5, curl, Git, systemd with encrypted cred
 7. Inspect existing Tailscale Serve configuration. If port 8443 is unused, enable only this mapping: `tailscale serve --bg --https=8443 http://127.0.0.1:18766`. Do not reset existing mappings or use Funnel. Access follows the tailnet's policy.
 
 No change to the shared reverse proxy, firewall, or existing services is needed. Rootless Docker and the system service must already be configured to start at boot. Confirm that explicitly during installation.
+
+## Custom domain
+
+The Cloudflare `A` record for `hackerbrain.tarscase.com` points to Luna's Tailscale IPv4 address with proxying **off** (DNS only). The existing Luna Edge wildcard certificate terminates HTTPS. `deploy/traefik-hackerbrain.yml` is copied into `/home/cooper/services/luna-edge/dynamic/hackerbrain.yml`; the file provider picks it up without restarting the shared proxy. The route forwards to the private Tailscale Serve URL with upstream certificate verification enabled.
+
+Before changing this route, verify Luna's current Tailscale address, check for existing DNS records, and back up the dynamic configuration. Test the route with forced DNS resolution before creating/changing the DNS record. Keep the original Serve route as a fallback. This deployment uses neither Cloudflare Tunnel nor public ingress.
+
+The app update script does not change shared proxy or DNS configuration. To roll back just the custom domain, restore the previous dynamic configuration and DNS record; the fallback URL remains independent.
 
 ## Updating from any clone
 
