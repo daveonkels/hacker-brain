@@ -35,6 +35,8 @@ Refresh preserves the original start date and adds to the collection. It recheck
 
 The data directory must be writable and contain the original exports, `run.json`, collection reports, and both search indexes. Completed updates live in separate generations selected by `current.json`. Keep that directory intact; see [deployment and recovery](DEPLOYMENT.md#automatic-and-manual-data-refresh) for storage and backup details. The homelab deployment refreshes automatically every hour; the button remains available for manual refreshes. Standalone local servers stay manual unless configured otherwise.
 
+Refreshes now use a separate worker, streaming source history and incremental indexes. See [incremental refresh and Orion deployment](docs/incremental-refresh.md) for the memory bounds, verification, and rollback procedure.
+
 ## Three ways to search
 
 | Mode | What it does | Requirements |

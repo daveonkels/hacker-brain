@@ -118,3 +118,33 @@ class SemanticTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class MemoryRegressionTests(unittest.TestCase):
+    def test_streamed_digest_matches_sha256_without_read_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory)/'index'
+            payload = b'index data' * 250000
+            source.write_bytes(payload)
+            with patch.object(pathlib.Path, 'read_bytes', side_effect=AssertionError('whole-file read')):
+                self.assertEqual(semantic.file_hash(source), hashlib.sha256(payload).hexdigest())
+
+    def test_query_cache_does_not_retain_discarded_engine(self):
+        import gc
+        import weakref
+        engine = semantic.Engine.__new__(semantic.Engine)
+        engine._cached_query = None
+        engine._cached_scores = None
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        engine.vector_path = pathlib.Path(temporary.name)/'vectors.sqlite3'
+        engine.stats = {'dimensions': 3}
+        with sqlite3.connect(engine.vector_path) as db:
+            db.execute('CREATE TABLE vectors(item_id,part,start,end,embedding)')
+            db.execute('INSERT INTO vectors VALUES(1,0,0,1,?)',(array.array('f',[1,0,0]).tobytes(),))
+        with patch.object(semantic, 'embed', return_value=[array.array('f', [1, 0, 0])]) as embed:
+            self.assertEqual(engine.similarities('query'), engine.similarities('query'))
+            self.assertEqual(embed.call_count, 1)
+        old = weakref.ref(engine)
+        del engine
+        gc.collect()
+        self.assertIsNone(old())

@@ -14,6 +14,9 @@ import sqlite3
 import threading
 import time
 import uuid
+import subprocess
+import sys
+import corpus
 
 import collect_hn as hn
 import context
@@ -21,7 +24,8 @@ import semantic
 
 
 def write_items(path, items):
-    path.write_text(''.join(json.dumps(items[n], ensure_ascii=False, separators=(',', ':'))+'\n' for n in sorted(items)))
+    with path.open('w') as stream:
+        for n in sorted(items):stream.write(json.dumps(items[n],ensure_ascii=False,separators=(',',':'))+'\n')
 
 
 def active_folder(root):
@@ -35,29 +39,8 @@ def active_folder(root):
     return folder
 
 
-def summary(folder, items, baseline, plan, pending):
-    counts = collections.Counter()
-    for item in items.values():
-        counts[item.get('type','unknown')] += 1
-        counts['deleted'] += bool(item.get('deleted'))
-        counts['dead'] += bool(item.get('dead'))
-    start = baseline['window']['start_inclusive']
-    hours = (plan['end']-datetime.datetime.fromisoformat(start).timestamp())/3600
-    raw = (folder/'items.ndjson').read_bytes()
-    (folder/'items.ndjson.gz').write_bytes(gzip.compress(raw, mtime=0))
-    return {'window':{'start_inclusive':start,'end_exclusive':hn.utc(plan['end']),'hours':hours},
-        'items':len(items),'counts':dict(counts),
-        'unique_authors':len({i['by'] for i in items.values() if i.get('by')}),
-        'storage_bytes':{'compact_jsonl':len(raw),'gzip_jsonl':(folder/'items.ndjson.gz').stat().st_size},
-        'refresh':{'through_id':plan['max_id'],'fetched_at':hn.utc(plan['end']),
-                   'pending_ids':pending,'new_items':len(set(items)-set(plan['original_ids']))},
-        'notes':['Cumulative collection; new HN IDs plus the most recent 200 IDs are fetched on refresh.',
-                 'Older edits and deletions outside that overlap are not exhaustively synchronized.',
-                 'Null or timestamp-less IDs are retained for retry. HN is not an atomic historical snapshot.']}
-
-
 class RefreshManager:
-    def __init__(self, root, on_publish=None, worker=None):
+    def __init__(self, root, on_publish=None, worker=None, isolated=False):
         self.root=Path(root).resolve()
         self.state_dir=self.root/'.refresh'
         self.state_dir.mkdir(exist_ok=True)
@@ -66,6 +49,8 @@ class RefreshManager:
         self.publishing=False
         self.on_publish=on_publish or (lambda:None)
         self.worker=worker or self.run
+        self.isolated=isolated
+        self.process=None
         self.thread=None
         self.status_path=self.state_dir/'status.json'
         self.status={'state':'idle','message':'Ready to fetch new HN items.'}
@@ -81,7 +66,7 @@ class RefreshManager:
 
     def get_status(self):
         with self.condition:
-            value=dict(self.status)
+            value=json.loads(self.status_path.read_text()) if self.isolated and self.thread is not None and self.status_path.exists() else dict(self.status)
         folder=active_folder(self.root)
         state=json.loads((folder/'refresh-state.json').read_text()) if (folder/'refresh-state.json').exists() else {}
         value['schedule']='hourly' if os.environ.get('HACKER_BRAIN_REFRESH_SCHEDULE')=='hourly' else 'manual'
@@ -119,7 +104,18 @@ class RefreshManager:
                 raise
             def work():
                 try:
-                    self.worker()
+                    if self.isolated:
+                        # The refresh needs public HN and local Ollama only. Do not
+                        # propagate broker credentials or proxy settings to it.
+                        allowed={'PATH','HOME','LANG','LC_ALL','TMPDIR','LD_LIBRARY_PATH','PYTHONUNBUFFERED','PYTHONDONTWRITEBYTECODE','HACKER_BRAIN_OLLAMA_URL'}
+                        env={k:v for k,v in os.environ.items() if k in allowed}
+                        self.process=subprocess.Popen([sys.executable,str(Path(__file__).resolve()),'--prepare',str(self.root),'--lock-fd',str(lock.fileno())],pass_fds=(lock.fileno(),),env=env)
+                        if self.process.wait()!=0:raise RuntimeError('Refresh worker failed')
+                        self.status=json.loads(self.status_path.read_text())
+                        stage=self.state_dir/'work'
+                        self.finish(stage,json.loads((stage/'plan.json').read_text()))
+                    else:
+                        self.worker()
                 except Exception as exc:
                     print(json.dumps({'event':'refresh_failed','phase':self.status.get('phase'),'type':type(exc).__name__}),flush=True)
                     # Raw provider errors may include sensitive proxy details.
@@ -177,7 +173,7 @@ class RefreshManager:
             if folder not in keep:
                 shutil.rmtree(folder)
 
-    def run(self):
+    def run(self, prepare_only=False):
         import search
         base=active_folder(self.root)
         stage=self.state_dir/'work';stage.mkdir(exist_ok=True)
@@ -192,8 +188,7 @@ class RefreshManager:
             if type(maximum) is not int or maximum<base_state['max_id']:
                 raise ValueError('Invalid HN maximum ID')
             plan={'id':uuid.uuid4().hex,'base':str(base),'max_id':maximum,'end':int(time.time())+1,
-                  'low':max(1,base_state['max_id']-199),'pending':base_state['pending_ids'],
-                  'original_ids':list(context.load_items(base/'items.ndjson'))}
+                  'low':max(1,base_state['max_id']-199),'pending':base_state['pending_ids']}
             hn.save_json(stage/'plan.json',plan)
         plan=json.loads((stage/'plan.json').read_text())
         if plan['base']!=str(base):
@@ -210,57 +205,55 @@ class RefreshManager:
                     if result['failed_ids']:
                         raise RuntimeError('Some HN items could not be fetched')
                     pending.update(result['null_ids'])
-            new={}
-            for path in sorted(chunks.glob('*.ndjson')):
-                new.update(context.load_items(path))
-            # Retry unavailable older IDs without revisiting the whole archive.
-            for n in plan['pending']:
-                if n>=plan['low']:
-                    continue
-                item=hn.fetch('item/%s'%n)
-                if item is None:
-                    pending.add(n)
-                elif item.get('id')!=n:
-                    raise ValueError('Retry ID mismatch')
-                else:
-                    new[n]=item
-            items=context.load_items(base/'items.ndjson')
-            older=context.load_items(base/'context.ndjson')
-            start=datetime.datetime.fromisoformat(baseline['window']['start_inclusive']).timestamp()
-            for n,item in new.items():
-                if n in items:
-                    # Deletion markers may have lost their creation timestamp.
-                    items[n]=item
-                elif isinstance(item.get('time'),int) and start<=item['time']<plan['end']:
-                    items[n]=item
-                    older.pop(n,None)
-                elif not isinstance(item.get('time'),int) or item['time']>=plan['end']:
-                    pending.add(n)
-                else:
-                    older[n]=item
-            write_items(stage/'items.ndjson',items)
-            write_items(stage/'context.ndjson',older)
-            write_items(stage/'unattributed.ndjson',{n:i for n,i in new.items() if n in pending})
-            self.report(phase='context',message='Connecting parent conversations…',done=0,total=0)
-            report=context.backfill(stage)
-            if report['failed_ids']:
-                raise RuntimeError('Parent context fetch failed')
-            stats=summary(stage,items,baseline,plan,sorted(pending))
-            hn.save_json(stage/'summary.json',stats)
-            hn.save_json(stage/'refresh-state.json',{'max_id':plan['max_id'],'pending_ids':sorted(pending),'fetched_at':hn.utc(plan['end'])})
-            shutil.copy2(base/'run.json',stage/'run.json')
-            self.report(phase='indexing',message='Updating keyword search…')
-            search.build(stage)
+            with contextlib.closing(corpus.open_store(base,stage)) as source:
+                new_count=0
+                start=datetime.datetime.fromisoformat(baseline['window']['start_inclusive']).timestamp()
+                def apply(item):
+                    nonlocal new_count
+                    n=item['id'];old=source.execute('SELECT sample FROM source WHERE id=?',(n,)).fetchone()
+                    if old and old[0]:corpus.put(source,item,1)
+                    elif isinstance(item.get('time'),int) and start<=item['time']<plan['end']:
+                        corpus.put(source,item,1);new_count+=1
+                    elif not isinstance(item.get('time'),int) or item['time']>=plan['end']:pending.add(n)
+                    else:corpus.put(source,item,0)
+                with (stage/'unattributed.ndjson').open('w') as unattributed:
+                    for path in sorted(chunks.glob('*.ndjson')):
+                        for item in corpus.records(path):
+                            apply(item)
+                            if item['id'] in pending:unattributed.write(json.dumps(item)+'\n')
+                    for n in plan['pending']:
+                        if n>=plan['low']:continue
+                        item=hn.fetch('item/%s'%n)
+                        if item is None:pending.add(n)
+                        elif item.get('id')!=n:raise ValueError('Retry ID mismatch')
+                        else:
+                            apply(item)
+                            if n in pending:unattributed.write(json.dumps(item)+'\n')
+                source.commit()
+                self.report(phase='context',message='Connecting parent conversations…',done=0,total=0)
+                report=corpus.backfill(source,stage)
+                if report['failed_ids']:raise RuntimeError('Parent context fetch failed')
+                corpus.export(source,stage,baseline,plan,sorted(pending),new_count,report)
+                hn.save_json(stage/'refresh-state.json',{'max_id':plan['max_id'],'pending_ids':sorted(pending),'fetched_at':hn.utc(plan['end'])})
+                shutil.copy2(base/'run.json',stage/'run.json')
+                self.report(phase='indexing',message='Updating changed keyword records…')
+                search.update(stage,base,source)
             self.report(phase='indexing',message='Reusing unchanged semantic passages…')
             semantic.seed_unchanged(base,stage)
             hn.save_json(stage/'prepared.json',{'ready':True})
-            del items, older, new  # Release source dictionaries before background embedding.
         self.report(phase='embedding',message='Indexing new and changed comments…',done=0,total=0)
-        semantic.build(stage,batch_size=16,progress=lambda done,total:self.report(done=done,total=total))
+        semantic.build(stage,batch_size=4,progress=lambda done,total:self.report(done=done,total=total))
         for name in ('search.sqlite3','semantic.sqlite3'):
             with sqlite3.connect(stage/name) as db:
                 if db.execute('PRAGMA quick_check').fetchone()[0]!='ok':
                     raise RuntimeError('Index integrity check failed')
+        if prepare_only:
+            self.report(phase='ready',message='Indexes verified; ready to publish.',done=0,total=0)
+            return
+        self.finish(stage,plan)
+
+    def finish(self,stage,plan):
+        base=Path(plan['base'])
         # All generations share the live cache: no labels written during a
         # refresh are lost, and source-aware keys invalidate changed content.
         cache=stage/'rerank.sqlite3'
@@ -276,3 +269,15 @@ class RefreshManager:
         except (OSError,ValueError,KeyError):
             # Publication already succeeded; cleanup cannot turn it into a failed refresh.
             self.report(cleanup_warning='Older index snapshots could not be removed; check available storage.')
+
+
+if __name__=='__main__':
+    import argparse
+    parser=argparse.ArgumentParser(description='Isolated incremental refresh preparation')
+    parser.add_argument('--prepare',type=Path,required=True)
+    parser.add_argument('--lock-fd',type=int,required=True)
+    args=parser.parse_args()
+    import resource
+    resource.setrlimit(resource.RLIMIT_AS,(768*1024*1024,768*1024*1024))
+    os.fstat(args.lock_fd)  # Parent's inherited flock stays held for this worker.
+    RefreshManager(args.prepare).run(prepare_only=True)

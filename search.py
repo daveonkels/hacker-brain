@@ -123,6 +123,51 @@ def build(folder):
     return stats
 
 
+def update(folder, base, source):
+    """Copy the live index; recompute only changed records and affected descendants."""
+    from corpus import copy_database
+    destination=folder/'search.sqlite3'
+    copy_database(base/'search.sqlite3',destination)
+    with contextlib.closing(sqlite3.connect(destination)) as db:
+        db.execute('PRAGMA cache_size=-8192')
+        db.execute('PRAGMA temp_store=FILE')
+        db.execute('ATTACH DATABASE ? AS raw',(str(folder/'corpus.sqlite3'),))
+        db.executescript('DROP TABLE IF EXISTS refresh_changed; CREATE TABLE refresh_changed(id INTEGER PRIMARY KEY);')
+        db.execute("""WITH RECURSIVE affected(id) AS (
+            SELECT id FROM raw.changed UNION
+            SELECT s.id FROM raw.source s JOIN affected a ON s.parent=a.id)
+            INSERT INTO refresh_changed SELECT id FROM affected""")
+        for (n,) in db.execute('SELECT id FROM refresh_changed ORDER BY id'):
+            row=source.execute('SELECT sample,data FROM source WHERE id=?',(n,)).fetchone()
+            if row is None:raise ValueError('Changed source record missing')
+            sample,item=row[0],json.loads(row[1])
+            ancestor=n;seen=set();root_item={};root_id=None
+            while ancestor is not None:
+                if ancestor in seen:raise ValueError('Cycle in ancestor chain')
+                seen.add(ancestor)
+                parent=source.execute('SELECT parent,data FROM source WHERE id=?',(ancestor,)).fetchone()
+                if parent is None:break
+                if not parent[0]:root_id=ancestor;root_item=json.loads(parent[1]);break
+                ancestor=parent[0]
+            title=plain(root_item.get('title') or item.get('title') or 'Untitled discussion')
+            body=plain(item.get('text',''));signals=experience_signals(body)
+            score=(3 if 'Firsthand wording' in signals else 0)+len(signals)
+            db.execute('INSERT OR REPLACE INTO items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (n,item.get('type'),item.get('by',''),item.get('time'),item.get('parent'),root_id,title,body,
+                 item.get('url',''),sample,int(bool(item.get('deleted'))),int(bool(item.get('dead'))),score,json.dumps(signals)))
+            db.execute('DELETE FROM search WHERE rowid=?',(n,))
+            db.execute('INSERT INTO search(rowid,body,title,author) VALUES(?,?,?,?)',(n,normalize(body),normalize(title),item.get('by','')))
+        summary=json.loads((folder/'summary.json').read_text())
+        context=json.loads((folder/'context-summary.json').read_text())
+        stats={'sample':summary,'context':context,'indexed_items':db.execute('SELECT count(*) FROM items').fetchone()[0],
+            'searchable_comments':db.execute("SELECT count(*) FROM items WHERE type='comment' AND body!='' AND deleted=0 AND dead=0").fetchone()[0],
+            'discussions':db.execute('SELECT count(DISTINCT root) FROM items WHERE root IS NOT NULL AND root!=0').fetchone()[0],
+            'firsthand_comments':db.execute("SELECT count(*) FROM items WHERE type='comment' AND experience>=4 AND body!='' AND deleted=0 AND dead=0").fetchone()[0]}
+        db.execute('INSERT OR REPLACE INTO metadata VALUES(?,?)',('stats',json.dumps(stats)))
+        db.commit()
+    return stats
+
+
 def connect(path):
     db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
     db.row_factory = sqlite3.Row
@@ -220,7 +265,7 @@ def handler(db_path, reranker='local'):
         nonlocal semantic_engine
         with engine_lock:
             semantic_engine = None
-    refresh = RefreshManager(db_path.parent, on_publish=invalidate)
+    refresh = RefreshManager(db_path.parent, on_publish=invalidate, isolated=True)
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):

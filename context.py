@@ -11,7 +11,8 @@ from collect_hn import fetch, save_json, utc
 def load_items(path):
     if not path.exists():
         return {}
-    return {item['id']: item for item in (json.loads(line) for line in path.read_text().splitlines())}
+    with path.open() as stream:
+        return {item['id']: item for item in (json.loads(line) for line in stream if line.strip())}
 
 
 def backfill(folder, workers=12):
