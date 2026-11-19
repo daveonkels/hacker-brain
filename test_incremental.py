@@ -82,6 +82,7 @@ runpy.run_module('refresh',run_name='__main__')
                 with manager.condition:
                     self.assertTrue(manager.condition.wait_for(lambda:manager.publishing,timeout=8))
                 self.assertEqual(refresh.active_folder(self.root),self.root)
+                self.assertEqual(manager.get_status()['state'],'running')
             manager.thread.join(8)
         self.assertFalse(manager.thread.is_alive());self.assertEqual(manager.get_status()['state'],'complete')
         self.assertEqual(set(refresh.context.load_items(refresh.active_folder(self.root)/'items.ndjson')),{300,301,302})

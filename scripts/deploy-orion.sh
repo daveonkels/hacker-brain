@@ -23,6 +23,7 @@ cp -a /opt/hacker-brain/web "$stage/web"
 tar -xf "$archive" -C "$stage"
 (cd "$stage" && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -q >test-result.log 2>&1) || { tail -60 "$stage/test-result.log"; exit 1; }
 tail -4 "$stage/test-result.log"
+sudo -n flock -n /var/lib/hacker-brain/sample/.refresh/refresh.lock true || { echo 'Refresh worker still active; retry after completion' >&2; exit 1; }
 status=$(curl -fsS --max-time 10 http://127.0.0.1:18766/api/refresh-status)
 STATE_JSON="$status" python3 -c 'import os,json; assert json.loads(os.environ["STATE_JSON"])["state"] != "running", "Wait for the active refresh before deployment"'
 backup=/var/backups/hacker-brain/incremental-$revision
@@ -36,6 +37,7 @@ restore() {
     sudo -n systemctl start hacker-brain.service
 }
 trap 'rc=$?; if (( rc != 0 && app_stopped )); then restore; fi; sudo -n systemctl start hacker-brain-refresh.timer' EXIT
+sudo -n flock -n /var/lib/hacker-brain/sample/.refresh/refresh.lock true || { echo 'Refresh worker still active; retry after completion' >&2; exit 1; }
 status=$(curl -fsS --max-time 10 http://127.0.0.1:18766/api/refresh-status)
 STATE_JSON="$status" python3 -c 'import os,json; assert json.loads(os.environ["STATE_JSON"])["state"] != "running", "Refresh started; retry after it finishes"'
 sudo -n systemctl stop hacker-brain.service

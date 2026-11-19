@@ -283,4 +283,6 @@ if __name__=='__main__':
     if sys.platform.startswith('linux'):
         resource.setrlimit(resource.RLIMIT_AS,(768*1024*1024,768*1024*1024))
     os.fstat(args.lock_fd)  # Parent's inherited flock stays held for this worker.
-    RefreshManager(args.prepare).run(prepare_only=True)
+    manager=RefreshManager(args.prepare)
+    manager.report(state='running',phase='starting',message='Preparing the incremental refresh…',error=None,cleanup_warning=None)
+    manager.run(prepare_only=True)
