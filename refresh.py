@@ -109,6 +109,7 @@ class RefreshManager:
                         # propagate broker credentials or proxy settings to it.
                         allowed={'PATH','HOME','LANG','LC_ALL','TMPDIR','LD_LIBRARY_PATH','PYTHONUNBUFFERED','PYTHONDONTWRITEBYTECODE','HACKER_BRAIN_OLLAMA_URL'}
                         env={k:v for k,v in os.environ.items() if k in allowed}
+                        env['MALLOC_ARENA_MAX']='2'
                         self.process=subprocess.Popen([sys.executable,str(Path(__file__).resolve()),'--prepare',str(self.root),'--lock-fd',str(lock.fileno())],pass_fds=(lock.fileno(),),env=env)
                         if self.process.wait()!=0:raise RuntimeError('Refresh worker failed')
                         self.status=json.loads(self.status_path.read_text())
@@ -278,6 +279,8 @@ if __name__=='__main__':
     parser.add_argument('--lock-fd',type=int,required=True)
     args=parser.parse_args()
     import resource
-    resource.setrlimit(resource.RLIMIT_AS,(768*1024*1024,768*1024*1024))
+    threading.stack_size(512*1024)
+    if sys.platform.startswith('linux'):
+        resource.setrlimit(resource.RLIMIT_AS,(768*1024*1024,768*1024*1024))
     os.fstat(args.lock_fd)  # Parent's inherited flock stays held for this worker.
     RefreshManager(args.prepare).run(prepare_only=True)

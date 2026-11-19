@@ -61,7 +61,8 @@ refresh.time.time=lambda:300
 semantic.model_digest=lambda:'fixed-model'
 semantic.embed=lambda texts,prefix:[semantic.unit([1,2,3]) for t in texts]
 time.sleep(0.5)
-refresh.RefreshManager(Path(sys.argv[2])).run(prepare_only=True)
+import runpy
+runpy.run_module('refresh',run_name='__main__')
 ''')
         (self.root/'fixture.json').write_text(json.dumps(self.records))
         manager=refresh.RefreshManager(self.root,isolated=True)
