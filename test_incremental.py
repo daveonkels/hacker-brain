@@ -12,6 +12,7 @@ import time
 from unittest.mock import patch
 import test_refresh as fixtures
 import refresh
+import corpus
 import search
 import semantic
 
@@ -33,6 +34,14 @@ class IncrementalTests(fixtures.RefreshTests):
         self.assertEqual(before,self.rows(rebuilt/'search.sqlite3'))
         with sqlite3.connect(folder/'corpus.sqlite3') as db:
             self.assertEqual(db.execute('SELECT count(*) FROM source').fetchone()[0],len(before))
+
+    def test_history_loss_fails_before_export(self):
+        stage=self.root/'bad-stage';stage.mkdir()
+        with contextlib.closing(corpus.open_store(self.root,stage)) as db:
+            db.execute('DELETE FROM source WHERE id=300');db.commit()
+            with self.assertRaisesRegex(ValueError,'lose historical'):
+                corpus.export(db,stage,{}, {'base':str(self.root)}, [],0,{})
+        self.assertFalse((stage/'items.ndjson').exists())
 
     def rows(self,path):
         with contextlib.closing(sqlite3.connect(path)) as db:return db.execute('SELECT * FROM items ORDER BY id').fetchall()

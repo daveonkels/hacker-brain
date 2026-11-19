@@ -81,6 +81,10 @@ def backfill(db,folder):
 
 
 def export(db,folder,baseline,plan,pending,new_count,context_report):
+    # Fail closed before writing or publishing a generation that loses history.
+    db.execute('ATTACH DATABASE ? AS previous_history',(str(Path(plan['base'])/'search.sqlite3'),))
+    missing=db.execute('SELECT 1 FROM previous_history.items p LEFT JOIN source s ON s.id=p.id WHERE s.id IS NULL OR (p.sample=1 AND s.sample!=1) LIMIT 1').fetchone()
+    if missing:raise ValueError('Refresh would lose historical records or sample membership')
     counts=collections.Counter()
     db.execute('CREATE TEMP TABLE authors(name TEXT PRIMARY KEY)')
     for sample,name in [(1,'items.ndjson'),(0,'context.ndjson')]:
