@@ -211,7 +211,7 @@ class DecisionsReranker(rerank.Reranker):
                       subject+' tools built integration']
         base = self.engine.candidates(db, params)
         baseline = rerank.diversify(base)
-        pool_key = self.key(['shortlist-v1',self.engine.config['source_sha256'],query,
+        pool_key = self.key(['shortlist-v2',self.engine.config['source_sha256'],query,
                              params.get('older')=='1',params.get('experience')=='1',params.get('depth')=='deep'])
         saved = self.read(pool_key)
         if saved:
@@ -225,7 +225,13 @@ class DecisionsReranker(rerank.Reranker):
         for rows in lists:
             for rank, row in enumerate(rows):
                 n = row[3]['id']
+                # Each query returns a bounded list. An expansion can discover
+                # a comment outside the original query's top 500.
+                original.setdefault(n, row)
                 fused[n] = fused.get(n,0) + 1/(40+rank)
+        if saved and all(n in original for n in saved['ids']):
+            self.retrieved_count = saved['retrieved']
+            return [original[n] for n in saved['ids']],baseline,expansions
         for n in fused:
             row = original[n][3]
             parent = db.execute('SELECT body FROM items WHERE id=?',(row['parent'],)).fetchone()

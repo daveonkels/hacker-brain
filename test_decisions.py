@@ -182,6 +182,39 @@ class DecisionsTests(unittest.TestCase):
             self.reviewer.pool(DB(),{'q':'local models','experience':'1','older':'1'})
             self.assertEqual(calls[-1]['older'],'1')
 
+    def test_expansion_only_matches_survive_ranking_and_cached_pagination(self):
+        base=[(.5,.5,(0,10),{**self.row,'id':1,'root':1,'author':'base'})]
+        expanded=[(.7,.7,(0,20),{**self.row,'id':900,'root':900,'author':'expanded'})]
+        self.engine.config={'source_sha256':'bounded-fixture'}
+        self.engine.candidates=lambda db,p: base if p['q']=='query' else expanded
+        first,ratings,info=self.reviewer.run(DB(),{'q':'query'})
+        self.assertEqual({r[3]['id'] for r in first},{1,900})
+        self.assertEqual(set(ratings),{1,900})
+        self.assertEqual(info['baseline_ids'],[1])
+        self.assertEqual(info['retrieved'],2)
+        expected=[r[3]['id'] for r in self.reviewer.pool(DB(),{'q':'query'})[0]]
+        # Later classifications must not reorder an already saved shortlist,
+        # even when an ID is missing from the original bounded result list.
+        doc={**expanded[0][3],'parent_context':self.doc['parent_context']}
+        req,_=decisions.classification_request(doc)
+        self.reviewer.save(self.reviewer.key([decisions.VERSION,'classification',req]),
+                           response(req,{'kind':'question','firsthand':'0','evidence':'0'}))
+        reopened=decisions.DecisionsReranker(self.engine,self.reviewer.transport)
+        again,baseline,_=reopened.pool(DB(),{'q':'query'})
+        self.assertEqual([r[3]['id'] for r in again],expected)
+        self.assertEqual([r[3]['id'] for r in baseline],[1])
+        self.assertEqual(next(r for r in again if r[3]['id']==900),expanded[0])
+
+    def test_local_reranker_also_accepts_expansion_only_matches(self):
+        base=[(.5,.5,(0,10),{**self.row,'id':1,'root':1,'author':'base'})]
+        expanded=[(.7,.7,(0,20),{**self.row,'id':900,'root':900,'author':'expanded'})]
+        self.engine.candidates=lambda db,p: base if p['q']=='query' else expanded
+        reviewer=decisions.rerank.Reranker(self.engine)
+        with patch.object(reviewer,'expand',return_value=['expanded']):
+            selected,baseline,_=reviewer.pool(DB(),{'q':'query'},'fixture')
+        self.assertEqual({r[3]['id'] for r in selected},{1,900})
+        self.assertEqual(baseline,base)
+
     def test_transport_rejects_unbounded_work_before_execution(self):
         with patch.object(decisions.subprocess,'run') as call:
             with self.assertRaises(ValueError): decisions.vault_transport([{}]*(decisions.WAVE_SIZE+1))

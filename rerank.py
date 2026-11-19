@@ -168,7 +168,7 @@ class Reranker:
             for rows in lists:
                 if position<len(rows):
                     row=rows[position]
-                    selected.setdefault(row[3]['id'],original[row[3]['id']])
+                    selected.setdefault(row[3]['id'],original.get(row[3]['id'],row))
         return list(selected.values()),baseline,expansions
 
     def assess(self, db, query, candidates, model_digest, progress=None):
